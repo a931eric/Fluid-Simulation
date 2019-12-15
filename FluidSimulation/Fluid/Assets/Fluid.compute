@@ -1,0 +1,70 @@
+﻿#pragma kernel R
+#pragma kernel U
+#pragma kernel Update
+#pragma kernel Output
+
+#define X 64
+#define Y 64
+#define Z 64
+#define XY 4096
+#define GS 8
+#define OUTW 512
+#define OUTH 512
+
+RWStructuredBuffer<float> r,r1;
+RWStructuredBuffer<float3> u,u1;
+
+float ht = 0.01;
+float hx = 0.01;
+
+
+[numthreads(GS,GS,GS)]
+void R (uint3 id : SV_DispatchThreadID)
+{
+    int i = id.x + id.y * X+id.z *XY ;
+    r1[i] = r[i] +
+    (r[i] * (u[i - 1] - u[i + 1] + u[i - X] - u[i + X] + u[i - XY] - u[i + XY]) + (r[i - 1] - r[i + 1] + r[i - X] - r[i + X] + r[i - XY] - r[i + XY]) * u[i])/hx*ht;
+}
+[numthreads(GS, GS, GS)]
+void U(uint3 id : SV_DispatchThreadID)
+{
+    int i = id.x + id.y * X + id.z * XY;
+    u1[i] = u[i] +
+    (u[i - 1] - u[i + 1] + u[i - X] - u[i + X] + u[i - XY] - u[i + XY]) * u[i] / hx * ht;
+}
+[numthreads(GS, GS, GS)]
+void Update(uint3 id : SV_DispatchThreadID)
+{
+    int i = id.x + id.y * X + id.z * XY;
+    r[i] = r1[i];
+    u[i] = u1[i];
+}
+
+
+RWTexture2D<float4> o;
+float scale;
+float camPos;
+float3x3 camRot;
+float viewAngle, d;// d unit: pixel
+float4 color;
+
+#define Q 1.0 //unit: 1/hx
+#define oneMinusExp(x) (x<0.365?0.887*x:(x<3.6?x*(x*(x*(x*-0.0056375+0.06765)-0.33825)+0.8569)+0.0529:1.0))
+[numthreads(32, 32, 1)]
+void Output(uint3 id : SV_DispatchThreadID)
+{
+    float3 pos = camPos / hx - float3(X / 2, Y / 2, Z / 2);
+    float3 dir = normalize(mul(camRot, float3(id.x - OUTW / 2, id.y - OUTH / 2, d)))/Q /hx;
+    float4 sum=float4(0,0,0,0);
+    for (int i = 0; i < 100; i++)//max=Q*hx*sqrt(2)*X
+    {
+        int x = floor(pos.x);
+        int y = floor(pos.y);
+        int z = floor(pos.z);
+        int xyz = x + y * X + z * XY;
+        float InterpR = r[xyz];//--------------------
+        float a = oneMinusExp(1);
+        sum = float4(sum.rgb * (1 - a) + color.rgb * a, sum.a + color.a*a - sum.a * color.a*a);
+    }
+    o[id.x + id.y * X + id.z * XY] = sum;
+}
