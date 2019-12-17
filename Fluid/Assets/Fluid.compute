@@ -8,42 +8,79 @@
 #define Z 64
 #define XY 4096
 #define GS 8
-#define OUTW 32
-#define OUTH 32
+#define OUTW 2048
+#define OUTH 1024
 
-#define Q 100.0 //unit: 1/hx
 #define oneMinusExp(x) (x<0.365?0.887*x:(x<3.6?x*(x*(x*(x*-0.0056375+0.06765)-0.33825)+0.8569)+0.0529:1.0)) 
+#define xp [i+1] * (id.x < X - 1)
+#define xn [i-1] * (id.x >0)
+#define yp [i+X] * (id.y < Y - 1)
+#define yn [i-X] * (id.y >0)
+#define zp [i+XY] * (id.z < Z - 1)
+#define zn [i-XY] * (id.z >0)
 
 RWStructuredBuffer<float> r,r1;
 RWStructuredBuffer<float3> u,u1;
 
-float ht = 0.01;
-float hx = 0.01;
+float ht;
+float hx;
+float k,damp;
+float3 g;
 
 
 [numthreads(GS,GS,GS)]
 void R (uint3 id : SV_DispatchThreadID)
 {
-    /*int i = id.x + id.y * X+id.z *XY ;
+    
+    int i = id.x + id.y * X+id.z *XY ;
+    /*
+    if (id.x >= 1 && id.x < X-1 && id.y >= 1 && id.y < Y-1 && id.z >= 1 && id.z < Z-1)
+    {
+        r1[i] = r[i] +
+    (r[i] * (u[i - 1][0] - u[i + 1][0] + u[i - X][1] - u[i + X][1] + u[i - XY][2] - u[i + XY][2]) +
+    (r[i - 1] - r[i + 1]) * u[i][0] + (r[i - X] - r[i + X]) * u[i][1] + (r[i - XY] - r[i + XY]) * u[i][2]) / hx * ht;
+    }
+    else
+    {
+        r1[i] = 1;
+    }*/
+    
     r1[i] = r[i] +
-    (r[i] * (u[i - 1] - u[i + 1] + u[i - X] - u[i + X] + u[i - XY] - u[i + XY]) + (r[i - 1] - r[i + 1] + r[i - X] - r[i + X] + r[i - XY] - r[i + XY]) * u[i])/hx*ht;
-    */
+    (r[i] * ((u xn)[0] - (u xp)[0] + (u yn)[1] - (u yp)[1] + (u zn)[2] - (u zp)[2]) +
+    (r xn - r xp) * u[i][0] + (r yn - r yp) * u[i][1] + (r zn - r zp) * u[i][2]) / hx * ht;
 }
 [numthreads(GS, GS, GS)]
 void U(uint3 id : SV_DispatchThreadID)
 {
-    /*
     int i = id.x + id.y * X + id.z * XY;
-    u1[i] = u[i] +
-    (u[i - 1] - u[i + 1] + u[i - X] - u[i + X] + u[i - XY] - u[i + XY]) * u[i] / hx * ht;
+    /*
+    if (id.x >= 1 && id.x < X - 1 && id.y >= 1 && id.y < Y - 1 && id.z >= 1 && id.z < Z - 1)
+    {
+        
+        u1[i] = u[i] +
+    ((u[i - 1] - u[i + 1]) * u[i][0] + (u[i - X] - u[i + X]) * u[i][1] + (u[i - XY] - u[i + XY]) * u[i][2]
+    + float3((r1[i - 1] - r1[i + 1]), (r1[i - X] - r1[i + X]), (r1[i - XY] - r1[i + XY])) * k / (r1[i] > 0.01 ? r1[i] : 0.01)
+    +g
+    ) / hx * ht;
+    }
+    else
+    {
+        u1[i] = float3(0, 0, 0);
+    }
     */
+    u1[i] = u[i] +
+    ((u xn - u xp) * u[i][0] + (u yn - u yp) * u[i][1] + (u zn - u zp) * u[i][2]
+    + float3((r1 xn - r1 xp), (r1 yn - r1 yp), (r1 zn - r1 zp)) * k / (r1[i] > 0.01 ? r1[i] : 0.01)
+    + g
+    ) / hx * ht;
+    
 }
 [numthreads(GS, GS, GS)]
 void Update(uint3 id : SV_DispatchThreadID)
 {
     int i = id.x + id.y * X + id.z * XY;
     r[i] = r1[i];
-    u[i] = u1[i];
+    u[i] = u1[i]*damp;
 }
 
 
@@ -53,26 +90,31 @@ float3 camPos;
 float3x3 camRot;
 float d;//unit: pixel
 float4 color;
+float q;
 
 
 [numthreads(GS,GS, 1)]
 void Output(uint3 id : SV_DispatchThreadID)
 { 
-    float3 pos = camPos / hx - float3(X / 2, Y / 2, Z / 2);
-    float3 dir = mul(camRot,normalize( float3(id.x - OUTW / 2, id.y - OUTH / 2, d)))/Q /hx;
+    float3 pos = camPos / hx + float3(X / 2, Y / 2, Z / 2);
+    pos *= scale;
+    float3 dir = mul(camRot,normalize(float3((int) id.x - OUTW / 2, (int) id.y - OUTH / 2, d))) / q / hx;
+    //dir =  normalize(float3((int) id.x - OUTW / 2, (int) id.y - OUTH / 2, d)) / q / hx;
     float4 sum=float4(0,0,0,0);
     for (int i = 0; i < 500; i++)//max=Q*hx*sqrt(2)*X
     {
         int x = floor(pos.x);
         int y = floor(pos.y);
         int z = floor(pos.z);
-        int xyz = x + y * X + z * XY;
-        float InterpR = r[xyz];//--------------------
-        float a = oneMinusExp(color.a*r[xyz]);
-        sum = float4(sum.rgb * (1.0 - a) + color.rgb * a, sum.a + a - sum.a * a);
-        pos += dir;
+        if (x >= 0 && x < X && y >= 0 && y < Y && z >= 0 && z < Z)
+        {
+            int xyz = x + y * X + z * XY;
+            float InterpR = r[xyz]; //--------------------
+            float a = oneMinusExp(color.a*InterpR);
+            sum = float4((sum.rgb * sum.a * (1.0 - a) + color.rgb * a) / (sum.a + a - sum.a * a), sum.a + a - sum.a * a);
+        }
+        pos += dir * scale;
     }
+    //o[id.xy] = float4(normalize(dir)/2.0 + float3(.5, .5, .5), 1);
     o[id.xy] = sum;
-    
-    //o[id.xy] = float4(1,0,0,.2);
 }
