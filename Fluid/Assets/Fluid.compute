@@ -10,6 +10,7 @@
 #define GS 8
 #define OUTW 2048
 #define OUTH 1024
+#define REPEAT 500
 
 #define oneMinusExp(x) (x<0.365?0.887*x:(x<3.6?x*(x*(x*(x*-0.0056375+0.06765)-0.33825)+0.8569)+0.0529:1.0)) 
 #define xp [i+1] * (id.x < X - 1)
@@ -93,28 +94,36 @@ float4 color;
 float q;
 
 
-[numthreads(GS,GS, 1)]
+[numthreads(GS,GS, 1)] 
 void Output(uint3 id : SV_DispatchThreadID)
 { 
     float3 pos = camPos / hx + float3(X / 2, Y / 2, Z / 2);
     pos *= scale;
-    float3 dir = mul(camRot,normalize(float3((int) id.x - OUTW / 2, (int) id.y - OUTH / 2, d))) / q / hx;
+    float3 dir = mul(camRot, normalize(float3((int) id.x - OUTW / 2, (int) id.y - OUTH / 2, d))) / q / hx * scale;
+    pos += REPEAT * dir;
     //dir =  normalize(float3((int) id.x - OUTW / 2, (int) id.y - OUTH / 2, d)) / q / hx;
-    float4 sum=float4(0,0,0,0);
-    for (int i = 0; i < 500; i++)//max=Q*hx*sqrt(2)*X
+    float4 sum=float4(0,0,0,1);
+    for (int i = 0; i < REPEAT; i++)//max=Q*hx*sqrt(2)*X
     {
         int x = floor(pos.x);
         int y = floor(pos.y);
         int z = floor(pos.z);
-        if (x >= 0 && x < X && y >= 0 && y < Y && z >= 0 && z < Z)
+        
+        if (x >= 0 && x < X-1 && y >= 0 && y < Y-1 && z >= 0 && z < Z-1)
         {
             int xyz = x + y * X + z * XY;
-            float InterpR = r[xyz]; //--------------------
+            float dx = x - pos.x ;
+            float dy = y - pos.y ;
+            float dz = z - pos.z;
+            float InterpR = (r[xyz] * (1 - dx) * (1 - dy) * (1 - dz) + r[xyz + 1] * dx * (1 - dy) * (1 - dz) +
+            r[xyz + X] * (1 - dx) * dy * (1 - dz) + r[xyz + X + 1] * dx * dy * (1 - dz) +
+             r[xyz + XY] * (1 - dx) * (1 - dy) * dz + r[xyz + XY + 1] * dx * (1 - dy) * dz +
+            r[xyz + XY + X] * (1 - dx) * dy * dz + r[xyz + XY + X + 1] * dx * dy * dz);
             float a = oneMinusExp(color.a*InterpR);
-            sum = float4((sum.rgb * sum.a * (1.0 - a) + color.rgb * a) / (sum.a + a - sum.a * a), sum.a + a - sum.a * a);
+            sum = float4((sum.rgb * sum.a * (1.0 - a) + float3(x,y,z)/64.0 * a) / (sum.a + a - sum.a * a), sum.a + a - sum.a * a);
+
         }
-        pos += dir * scale;
+        pos -= dir;
     }
-    //o[id.xy] = float4(normalize(dir)/2.0 + float3(.5, .5, .5), 1);
     o[id.xy] = sum;
 }
